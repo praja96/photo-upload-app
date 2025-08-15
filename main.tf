@@ -18,6 +18,7 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+  profile = "personal"
 }
 
 
@@ -116,6 +117,92 @@ resource "aws_lambda_function" "presign" {
   }
 }
 
+resource "aws_lambda_alias" "prod" {
+  name             = "prod"
+  function_name    = aws_lambda_function.presign.function_name
+  function_version = "$LATEST"
+}
+
+resource "aws_lambda_alias" "test" {
+  name             = "test"
+  function_name    = aws_lambda_function.presign.function_name
+  function_version = "$LATEST"
+}
+
+# ---------- API Gateway (HTTP) in front of Lambda test -----------
+
+resource "aws_apigatewayv2_api" "api_test" {
+  name          = "${aws_lambda_function.presign.function_name}-http-test"
+  protocol_type = "HTTP"
+  cors_configuration {
+    allow_origins = [var.test_app_origin]  # only the staging site
+    allow_methods = ["GET", "POST", "OPTIONS"]
+    allow_headers = ["Authorization", "Content-Type"]
+  }
+}
+
+resource "aws_apigatewayv2_integration" "lambda_integration_test" {
+  api_id                 = aws_apigatewayv2_api.api_test.id
+  integration_type       = "AWS_PROXY"
+  integration_method     = "POST"
+  integration_uri        = "${aws_lambda_function.presign.arn}:${aws_lambda_alias.test.name}"  # <- use invoke_arn
+  payload_format_version = "2.0"
+  timeout_milliseconds   = 29000
+}
+
+resource "aws_apigatewayv2_authorizer" "cognito_test" {
+  api_id           = aws_apigatewayv2_api.api_test.id
+  name             = "cognito-test"
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.web.id]  # same SPA client id
+    issuer   = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.app.id}"
+  }
+}
+
+resource "aws_apigatewayv2_route" "buckets_route_test" {
+  api_id             = aws_apigatewayv2_api.api_test.id
+  route_key          = "GET /buckets"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration_test.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito_test.id
+  authorization_type = "JWT"
+}
+
+resource "aws_apigatewayv2_route" "presign_route_test" {
+  api_id             = aws_apigatewayv2_api.api_test.id
+  route_key          = "POST /presign"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration_test.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito_test.id
+  authorization_type = "JWT"
+}
+
+resource "aws_apigatewayv2_stage" "default_test" {
+  api_id      = aws_apigatewayv2_api.api_test.id
+  name        = "$default"
+  auto_deploy = true
+}
+
+resource "aws_lambda_permission" "apigw_test_invoke" {
+  statement_id  = "AllowInvokeFromHttpApiStaging"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.presign.function_name
+  qualifier     = aws_lambda_alias.test.name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.api_test.execution_arn}/*/*"
+}
+
+resource "aws_cloudwatch_log_group" "apigw_test" {
+  name              = "/aws/api-http-test/${aws_apigatewayv2_api.api_test.name}"
+  retention_in_days = 7
+}
+
+
+output "staging_api_base_url" {
+  value = aws_apigatewayv2_api.api_test.api_endpoint
+}
+
+
 # ---------- API Gateway (HTTP API) in front of Lambda ----------
 
 resource "aws_apigatewayv2_api" "api" {
@@ -149,7 +236,7 @@ resource "aws_apigatewayv2_integration" "lambda_integration" {
   api_id                 = aws_apigatewayv2_api.api.id
   integration_type       = "AWS_PROXY"
   integration_method     = "POST"
-  integration_uri        = aws_lambda_function.presign.invoke_arn  # <- use invoke_arn
+  integration_uri        = "${aws_lambda_function.presign.arn}:${aws_lambda_alias.prod.name}"  # <- use invoke_arn
   payload_format_version = "2.0"
   timeout_milliseconds   = 29000
 }
@@ -259,9 +346,10 @@ resource "aws_cognito_user_pool_client" "web" {
   # Dev callbacks (add your production origin when ready)
   callback_urls = [
     "${var.app_origin}/callback",
-    var.app_origin  # helpful for simple hash redirects during local dev
+    var.app_origin, "${var.test_app_origin}/callback",
+    var.test_app_origin
   ]
-  logout_urls = [var.app_origin,"${var.app_origin}/?signedout=1"]
+  logout_urls = [var.app_origin,"${var.app_origin}/?signedout=1",var.test_app_origin,"${var.test_app_origin}/?signedout=1"]
 
   generate_secret = false
 }
