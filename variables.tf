@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "max_upload_mb" {
   description = "Max upload size (MB) enforced in presigned policy"
   type        = number
-  default     = 50
+  default     = 5368709120
 }
 
 variable "allowed_origin" {
@@ -21,6 +21,12 @@ variable "app_origin" {
   description = "Your web app origin"
   type        = string
   default     = "https://upload.therajas.net"
+}
+
+variable "test_app_origin" {
+  description = "Your web app origin for test"
+  type        = string
+  default     = "https://upload-test.therajas.net"
 }
 
 variable "cognito_domain_prefix" {
