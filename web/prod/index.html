@@ -2,280 +2,229 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>The Rajas Photo And Video Uploader</title>
+  <title>S3 Uploader — Auth First (PKCE)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root { color-scheme: light dark; }
-    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-    h1 { font-size: 1.6rem; margin-bottom: .25rem; }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif; margin:0; }
+    #gate { display:flex; align-items:center; justify-content:center; min-height:100vh; }
+    .wrap { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    h1 { margin: 0 0 8px 0; font-size: 1.6rem; }
     .muted { color: #666; }
     .card { border: 1px solid #ddd; border-radius: 14px; padding: 1rem 1.2rem; box-shadow: 0 2px 10px rgba(0,0,0,.05); margin-bottom: 1rem; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; align-items: center; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
     .row  { display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; }
-    button { padding: .6rem 1rem; border-radius: 999px; border: 1px solid #ccc; cursor: pointer; }
-    select, input[type="text"] { width: 100%; padding: .5rem; border: 1px solid #ccc; border-radius: .5rem; }
-    progress { width: 100%; height: 12px; }
-    code { background: #f6f6f6; padding: .1rem .4rem; border-radius: 6px; }
-    .fade-out { opacity: 0; transition: opacity .5s ease; }
-    .pill { padding: .15rem .5rem; border-radius: 999px; background:#eee; font-size:.85em; }
-    .btn-sm { padding: .35rem .7rem; font-size:.9em; }
+    button { padding:.6rem 1rem; border-radius:999px; border:1px solid #ccc; cursor:pointer; }
+    select, input[type="text"] { width: 100%; padding:.5rem; border:1px solid #ccc; border-radius:.5rem; }
+    progress { width:100%; height:12px; }
+    .fade-out { opacity:0; transition:opacity .5s ease; }
+    .pill { padding:.15rem .5rem; border-radius:999px; background:#eee; font-size:.85em; }
+    .btn-sm { padding:.35rem .7rem; font-size:.9em; }
+    .row-item { border:1px solid #ddd; border-radius:10px; padding:.5rem .75rem; }
   </style>
 </head>
 <body>
-  <h1>Upload to AWS</h1>
-  <p class="muted">Code + PKCE (tokens only in memory). Multi-file uploads with progress, counters, and retry of failed files.</p>
+  <!-- Gate shown only while unauth/exchanging tokens -->
+  <div id="gate"><div>Signing you in… <span class="muted">(redirecting to Cognito)</span></div></div>
 
-  <div class="row" style="margin-bottom:1rem;">
-    Status: <strong id="authState" class="muted">Checking…</strong>
-    <button id="logoutBtn" style="display:none;">Sign out</button>
-    <button id="loginBtn"  style="display:none;">Sign in</button>
-    <span class="muted" id="whoami"></span>
-  </div>
+  <!-- App only renders after auth -->
+  <div id="app" style="display:none;">
+    <div class="wrap">
+      <div class="row" style="justify-content:space-between;">
+        <h1>Upload files to S3</h1>
+        <div class="row">
+          <span id="whoami" class="muted"></span>
+          <button id="logoutBtn">Sign out</button>
+        </div>
+      </div>
+      <p class="muted">Authenticated via Cognito Hosted UI (/login + PKCE). Tokens live only in memory.</p>
 
-  <div class="card">
-    <div class="grid">
-      <label>Bucket
-        <select id="bucket"><option>Loading…</option></select>
-        <small class="muted">Loaded from <code>GET /buckets</code></small>
-      </label>
-      <label>Folder (prefix)
-        <input id="folder" type="text" placeholder="e.g. uploads/wedding/2025" />
-        <small class="muted">Optional; no leading slash</small>
-      </label>
-    </div>
-  </div>
+      <div class="card">
+        <div class="grid">
+          <label>Bucket
+            <select id="bucket"><option>Loading…</option></select>
+            <small class="muted">Loaded from <code>GET /buckets</code></small>
+          </label>
+          <label>Folder (prefix)
+            <input id="folder" type="text" placeholder="e.g. uploads/wedding/2025" />
+            <small class="muted">Optional; no leading slash</small>
+          </label>
+        </div>
+      </div>
 
-  <div class="card">
-    <div class="row" style="margin-bottom:.5rem;">
-      <input id="files" type="file" multiple />
-      <button id="uploadBtn">Upload selected</button>
-      <button id="clearBtn" type="button">Clear finished</button>
-    </div>
+      <div class="card">
+        <div class="row" style="margin-bottom:.5rem;">
+          <input id="files" type="file" multiple />
+          <button id="uploadBtn">Upload selected</button>
+          <button id="clearBtn" type="button">Clear finished</button>
+        </div>
 
-    <div id="overallStatus" class="muted"></div>
+        <div id="overallStatus" class="muted"></div>
 
-    <div id="counters" class="muted" style="margin:.25rem 0 .5rem 0;">
-      Total: <span id="cntTotal">0</span> •
-      In-flight: <span id="cntInFlight">0</span> •
-      Completed: <span id="cntCompleted">0</span> •
-      Failed: <span id="cntFailed">0</span> •
-      Remaining: <span id="cntRemaining">0</span>
-    </div>
+        <div id="counters" class="muted" style="margin:.25rem 0 .5rem 0;">
+          Total: <span id="cntTotal">0</span> •
+          In-flight: <span id="cntInFlight">0</span> •
+          Completed: <span id="cntCompleted">0</span> •
+          Failed: <span id="cntFailed">0</span> •
+          Remaining: <span id="cntRemaining">0</span>
+        </div>
 
-    <div id="queue" style="display:grid; gap:.5rem;"></div>
-  </div>
+        <div id="queue" style="display:grid; gap:.5rem;"></div>
+      </div>
 
-  <div class="card" id="failPanel" style="display:none;">
-    <div class="row" style="justify-content:space-between;">
-      <div><strong>Failed uploads</strong> <span class="muted">(kept for retry)</span></div>
-      <div class="row">
-        <button id="retryAllBtn" class="btn-sm">Retry all</button>
-        <button id="clearFailsBtn" class="btn-sm">Clear</button>
+      <div class="card" id="failPanel" style="display:none;">
+        <div class="row" style="justify-content:space-between;">
+          <div><strong>Failed uploads</strong> <span class="muted">(kept for retry)</span></div>
+          <div class="row">
+            <button id="retryAllBtn" class="btn-sm">Retry all</button>
+            <button id="clearFailsBtn" class="btn-sm">Clear</button>
+          </div>
+        </div>
+        <div id="failList" style="margin-top:.5rem; display:grid; gap:.5rem;"></div>
       </div>
     </div>
-    <div id="failList" style="margin-top:.5rem; display:grid; gap:.5rem;"></div>
   </div>
 
 <script>
-  // ================== CONFIG — replace these ==================
-  const API_BASE         = "https://hea4g3ytp6.execute-api.us-east-1.amazonaws.com";              // https://abc123.execute-api.us-east-1.amazonaws.com
-  const USER_POOL_DOMAIN = "https://rajas-uploader.auth.us-east-1.amazoncognito.com";    // https://yourprefix.auth.us-east-1.amazoncognito.com
-  const CLIENT_ID        = "6i0p88m6vgvppc2bj5lvde1tjk";
-  const APP_ORIGIN       = window.location.origin;                   // must be in Callback + Sign-out URLs
-  // ============================================================
+  // ================== REQUIRED CONFIG (edit these) ==================
+  const API_BASE         = "https://6zjqcca3rf.execute-api.us-east-1.amazonaws.com";              // e.g. https://abc123.execute-api.us-east-1.amazonaws.com
+  const USER_POOL_DOMAIN = "https://rajas-uploader.auth.us-east-1.amazoncognito.com";
+  const CLIENT_ID        = "2tsae5m5he5pq5p8tc1h32cos4";
+  const APP_ORIGIN       = window.location.origin;                   // must be in Callback & Sign-out URLs
+  // ================================================================
 
   function validateConfig() {
     const errs = [];
     if (!API_BASE || API_BASE.startsWith("REPLACE_WITH")) errs.push("API_BASE not set");
-    if (!USER_POOL_DOMAIN || USER_POOL_DOMAIN.startsWith("REPLACE_WITH")) errs.push("USER_POOL_DOMAIN not set");
+    if (!USER_POOL_DOMAIN.includes(".auth.") || !USER_POOL_DOMAIN.startsWith("https://")) errs.push("USER_POOL_DOMAIN looks wrong");
     if (!CLIENT_ID || CLIENT_ID.startsWith("REPLACE_WITH")) errs.push("CLIENT_ID not set");
-    if (location.protocol === "http:" && location.hostname !== "localhost") errs.push("Use HTTPS (Cognito only allows http://localhost or HTTPS)");
-    if (!/^https:\/\/.*\.auth\.[-a-z0-9]+\.amazoncognito\.com$/i.test(USER_POOL_DOMAIN)) errs.push("USER_POOL_DOMAIN format looks wrong");
+    if (location.protocol === "http:" && location.hostname !== "localhost") errs.push("Use HTTPS (Cognito only allows http://localhost)");
     if (errs.length) { alert("Config issue:\n- " + errs.join("\n- ")); return false; }
     return true;
   }
 
-  // ======== In-memory auth state (no localStorage) ========
-  const auth = { idToken: null, accessToken: null, refreshToken: null, expiresAt: 0 };
-  const hostedBase = () => USER_POOL_DOMAIN.replace(/\/(login|oauth2)\/?$/i, "");
+  // ================== Auth (PKCE, in-memory only) ==================
+  const auth = { idToken:null, accessToken:null, refreshToken:null, expiresAt:0 };
 
-  function getIdToken(){ return auth.idToken; }
-  function clearTokens(){ auth.idToken=null; auth.accessToken=null; auth.refreshToken=null; auth.expiresAt=0; }
+  function hostedBase(){ return USER_POOL_DOMAIN.replace(/\/(login|oauth2)\/?$/i,""); }
+  function randStr(len=64){ const a=new Uint8Array(len); crypto.getRandomValues(a); return Array.from(a,b=>('0'+(b%36).toString(36)).slice(-1)).join(''); }
+  async function sha256b64url(s){ const buf=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
 
-  function randomString(len=64){ const arr = new Uint8Array(len); crypto.getRandomValues(arr); return Array.from(arr,b=>('0'+(b%36).toString(36)).slice(-1)).join(''); }
-  async function sha256B64URL(s){
-    const data = new TextEncoder().encode(s);
-    const buf = await crypto.subtle.digest("SHA-256", data);
-    return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-  }
-
-  async function startLoginPKCE(){
-    const verifier = randomString(64);
-    sessionStorage.setItem("pkce_verifier", verifier); // temp storage for post-redirect
-    const challenge = await sha256B64URL(verifier);
-    const u = new URL(hostedBase() + "/login");
+  async function buildLoginUrl(){
+    const verifier = randStr(64);
+    sessionStorage.setItem("pkce_verifier", verifier);
+    const challenge = await sha256b64url(verifier);
+    const u = new URL(USER_POOL_DOMAIN.replace(/\/$/,"") + "/login");
     u.searchParams.set("client_id", CLIENT_ID);
-    u.searchParams.set("response_type", "code");
-    u.searchParams.set("scope", "openid email profile");
+    u.searchParams.set("response_type","code");
+    u.searchParams.set("scope","openid email profile");
     u.searchParams.set("redirect_uri", APP_ORIGIN);
-    u.searchParams.set("code_challenge_method", "S256");
+    u.searchParams.set("code_challenge_method","S256");
     u.searchParams.set("code_challenge", challenge);
-    window.location.assign(u.toString());
+    return u.toString();
   }
 
   async function exchangeCodeForTokens(code){
     const verifier = sessionStorage.getItem("pkce_verifier");
     if (!verifier) throw new Error("Missing PKCE verifier");
     const body = new URLSearchParams({
-      grant_type: "authorization_code",
+      grant_type:"authorization_code",
       client_id: CLIENT_ID,
       code_verifier: verifier,
       code,
       redirect_uri: APP_ORIGIN
     });
-    const resp = await fetch(hostedBase() + "/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body
-    });
-    sessionStorage.removeItem("pkce_verifier");
-    if (!resp.ok) throw new Error("Token exchange failed " + resp.status);
-    const tok = await resp.json(); // {id_token, access_token, refresh_token, expires_in}
+    let resp;
+    try {
+      resp = await fetch(hostedBase()+"/oauth2/token", { method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded" }, body });
+    } catch (e) {
+      alert("Network error contacting Cognito /oauth2/token.");
+      throw e;
+    } finally {
+      sessionStorage.removeItem("pkce_verifier");
+    }
+    if (!resp.ok){ const txt=await resp.text().catch(()=>"(no body)"); alert(`Token exchange failed: ${resp.status}\n${txt.slice(0,500)}`); throw new Error("Token exchange failed "+resp.status); }
+    const tok = await resp.json();
     auth.idToken = tok.id_token;
     auth.accessToken = tok.access_token;
     auth.refreshToken = tok.refresh_token || null;
-    auth.expiresAt = Date.now() + ((tok.expires_in || 300) - 60) * 1000; // refresh 60s early
+    auth.expiresAt = Date.now() + ((tok.expires_in||300)-60)*1000;
     scheduleRefresh();
   }
 
   async function refreshIfNeeded(){
-    if (!auth.refreshToken) return; // cannot refresh
+    if (!auth.refreshToken) return;
     if (Date.now() < auth.expiresAt) return;
-    const body = new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CLIENT_ID,
-      refresh_token: auth.refreshToken
-    });
-    const resp = await fetch(hostedBase() + "/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body
-    });
-    if (!resp.ok) { console.warn("Refresh failed", resp.status); return; }
+    const body = new URLSearchParams({ grant_type:"refresh_token", client_id:CLIENT_ID, refresh_token:auth.refreshToken });
+    const resp = await fetch(hostedBase()+"/oauth2/token", { method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded" }, body });
+    if (!resp.ok) return;
     const tok = await resp.json();
     auth.idToken = tok.id_token || auth.idToken;
     auth.accessToken = tok.access_token || auth.accessToken;
-    auth.expiresAt = Date.now() + ((tok.expires_in || 300) - 60) * 1000;
+    auth.expiresAt = Date.now() + ((tok.expires_in||300)-60)*1000;
   }
+  function scheduleRefresh(){ if (!auth.refreshToken||!auth.expiresAt) return; const ms=Math.max(5000, auth.expiresAt-Date.now()); setTimeout(async()=>{ await refreshIfNeeded(); scheduleRefresh(); }, ms); }
 
-  function scheduleRefresh(){
-    if (!auth.refreshToken || !auth.expiresAt) return;
-    const ms = Math.max(5000, auth.expiresAt - Date.now());
-    setTimeout(async () => { await refreshIfNeeded(); scheduleRefresh(); }, ms);
-  }
-
-  function manualLogin(){ if (!validateConfig()) return; startLoginPKCE(); }
   function logout(){
-    clearTokens();
+    auth.idToken=auth.accessToken=auth.refreshToken=null; auth.expiresAt=0;
     const returnTo = APP_ORIGIN + "/?signedout=1";
-    const u = new URL(hostedBase() + "/logout");
+    const u = new URL(hostedBase()+"/logout");
     u.searchParams.set("client_id", CLIENT_ID);
     u.searchParams.set("logout_uri", returnTo);
     u.searchParams.set("redirect_uri", returnTo);
     window.location.assign(u.toString());
   }
 
-  // ======== UI helpers ========
   function decodeJwtPayload(jwt){
     try {
-      const base64 = jwt.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");
+      const base64 = jwt.split(".")[1].replace(/-/g,"+").replace(/_/g,"/"); 
       const json = decodeURIComponent(atob(base64).split("").map(c=>"%" + ("00"+c.charCodeAt(0).toString(16)).slice(-2)).join(""));
       return JSON.parse(json);
     } catch { return null; }
   }
-  function renderAuthState(){
-    const t = getIdToken();
-    const authEl = document.getElementById("authState");
-    const whoEl  = document.getElementById("whoami");
-    const logoutBtn = document.getElementById("logoutBtn");
-    const loginBtn  = document.getElementById("loginBtn");
-    if (t){
-      authEl.textContent = "Signed in";
-      const p = decodeJwtPayload(t);
-      whoEl.textContent = p ? ` • ${p.email || p.username || p["cognito:username"] || ""}` : "";
-      logoutBtn.style.display = "inline-block";
-      loginBtn.style.display  = "none";
-    } else {
-      authEl.textContent = "Signed out";
-      whoEl.textContent = "";
-      logoutBtn.style.display = "none";
-      loginBtn.style.display  = "inline-block";
-    }
-  }
 
+  // ================== API helpers ==================
   async function fetchBuckets(){
     await refreshIfNeeded();
-    const r = await fetch(`${API_BASE}/buckets`, {
-      method: "GET",
-      headers: { "Authorization": `Bearer ${getIdToken()}` }
-    });
-    if (!r.ok) throw new Error("Buckets request failed: " + r.status);
+    const r = await fetch(`${API_BASE}/buckets`, { headers:{ "Authorization":`Bearer ${auth.idToken}` }});
+    if (!r.ok){ const t=await r.text().catch(()=>"(no body)"); throw new Error(`Buckets failed: ${r.status} ${t}`); }
     const { buckets } = await r.json();
     return buckets || [];
   }
-  function fillBucketSelect(names){
-    const sel = document.getElementById("bucket");
-    sel.innerHTML = names.length ? names.map(n=>`<option value="${n}">${n}</option>`).join("") :
-      `<option value="" disabled selected>(none available)</option>`;
+  async function presign(file, bucket, folder){
+    await refreshIfNeeded();
+    const r = await fetch(`${API_BASE}/presign`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Authorization":`Bearer ${auth.idToken}` },
+      body: JSON.stringify({ filename:file.name, contentType:file.type||"application/octet-stream", bucket, folder })
+    });
+    if (!r.ok){ const t=await r.text().catch(()=>"(no body)"); throw new Error(`Presign failed: ${r.status} ${t}`); }
+    return r.json(); // {url, fields, key, bucket, region, sse}
   }
 
-  // ======== Boot ========
-  (async function boot(){
-    if (!validateConfig()) return;
-
-    const sp = new URLSearchParams(location.search);
-    if (sp.get("code")) {
-      try {
-        await exchangeCodeForTokens(sp.get("code"));
-        history.replaceState({}, document.title, location.pathname);
-      } catch (e) { console.error(e); alert("Login error: " + e.message); }
-    }
-
-    const noauto = sp.get("noauto") === "1";
-    const signedOut = sp.get("signedout") === "1";
-    if (!getIdToken() && signedOut && !noauto) { manualLogin(); return; }
-    if (!getIdToken() && !noauto) { manualLogin(); return; }
-
-    renderAuthState();
-    document.getElementById("logoutBtn").onclick = logout;
-    document.getElementById("loginBtn").onclick  = manualLogin;
-
-    try { fillBucketSelect(await fetchBuckets()); }
-    catch { alert("Could not load buckets."); fillBucketSelect([]); }
-  })();
-
-  // ======== Multi-file uploader with ephemeral rows, counters, retry ========
-  const $queue     = document.getElementById("queue");
+  // ================== UI + Uploader ==================
+  const $app   = document.getElementById("app");
+  const $gate  = document.getElementById("gate");
+  const $queue = document.getElementById("queue");
   const $overall   = document.getElementById("overallStatus");
-  const $cntTotal     = document.getElementById("cntTotal");
-  const $cntInFlight  = document.getElementById("cntInFlight");
-  const $cntCompleted = document.getElementById("cntCompleted");
-  const $cntFailed    = document.getElementById("cntFailed");
-  const $cntRemaining = document.getElementById("cntRemaining");
+  const $cntTotal  = document.getElementById("cntTotal");
+  const $cntIn     = document.getElementById("cntInFlight");
+  const $cntDone   = document.getElementById("cntCompleted");
+  const $cntFail   = document.getElementById("cntFailed");
+  const $cntRemain = document.getElementById("cntRemaining");
   const $failPanel = document.getElementById("failPanel");
   const $failList  = document.getElementById("failList");
 
   const CONCURRENCY = 3, AUTO_REMOVE_MS = 3000, MAX_VISIBLE_ROWS = 50;
+  const failures = new Map(); let uidSeq=1;
 
-  const failures = new Map(); let uidSeq = 1;
-  function updateCounters({total,inFlight,completed,failed}) {
-    $cntTotal.textContent=total; $cntInFlight.textContent=inFlight;
-    $cntCompleted.textContent=completed; $cntFailed.textContent=failed;
-    $cntRemaining.textContent=Math.max(0,total-(completed+failed+inFlight));
+  function updateCounters({total,inFlight,completed,failed}){
+    $cntTotal.textContent=total; $cntIn.textContent=inFlight; $cntDone.textContent=completed; $cntFail.textContent=failed;
+    $cntRemain.textContent = Math.max(0, total-(completed+failed+inFlight));
   }
+
   function makeRow(file){
     const row=document.createElement("div"); row.className="row-item";
-    row.style.cssText="border:1px solid #ddd;border-radius:10px;padding:.5rem .75rem";
     row.innerHTML=`
       <div style="display:flex;justify-content:space-between;gap:.75rem;align-items:center;">
         <div style="min-width:0;">
@@ -288,89 +237,66 @@
       <div class="result" style="margin-top:.25rem;font-family:ui-monospace,Menlo,monospace;"></div>`;
     return row;
   }
-  function removeRow(row, delay=AUTO_REMOVE_MS){
-    if (!row.isConnected) return;
-    setTimeout(()=>{ row.classList.add("fade-out"); setTimeout(()=>row.remove(),500); }, delay);
-  }
-  function boundVisibleRows(){
-    const rows=$queue.querySelectorAll(".row-item");
-    if (rows.length<=MAX_VISIBLE_ROWS) return;
-    let extra=rows.length-MAX_VISIBLE_ROWS, removed=0;
-    for (const r of rows){ const s=r.querySelector(".status")?.textContent||"";
-      if (/^Done|^Failed|^Presign failed|^Network error/.test(s)){ r.remove(); if(++removed>=extra) break; } }
-  }
+  function removeRow(row, delay=AUTO_REMOVE_MS){ if (!row.isConnected) return; setTimeout(()=>{ row.classList.add("fade-out"); setTimeout(()=>row.remove(),500); }, delay); }
+  function boundVisibleRows(){ const rows=$queue.querySelectorAll(".row-item"); if(rows.length<=MAX_VISIBLE_ROWS) return; let remove=rows.length-MAX_VISIBLE_ROWS, n=0;
+    for(const r of rows){ const s=r.querySelector(".status")?.textContent||""; if(/^Done|^Failed|^Presign|^Network/.test(s)){ r.remove(); if(++n>=remove) break; }}}
 
-  function renderFailureItem(entry){
+  function addFailure(file,bucket,folder,reason){
+    const id=uidSeq++; const entry={id,file,bucket,folder,reason};
+    failures.set(id,entry);
     $failPanel.style.display="block";
-    const item=document.createElement("div"); item.id=`fail-${entry.id}`;
-    item.style.cssText="border:1px dashed #d99;border-radius:10px;padding:.5rem .75rem";
-    item.innerHTML=`
+    const el=document.createElement("div"); el.id=`fail-${id}`;
+    el.style.cssText="border:1px dashed #d99;border-radius:10px;padding:.5rem .75rem;";
+    el.innerHTML=`
       <div class="row" style="justify-content:space-between;">
         <div style="min-width:0;">
-          <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${entry.file.name}</div>
-          <div class="muted" style="font-size:.9em;">
-            <span class="pill">bucket: ${entry.bucket}</span>${entry.folder?` <span class="pill">folder: ${entry.folder}</span>`:""}
-          </div>
-          <div class="muted" style="font-size:.9em;margin-top:.25rem;">${entry.reason||"Failed"}</div>
+          <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${file.name}</div>
+          <div class="muted" style="font-size:.9em;"><span class="pill">bucket: ${bucket}</span>${folder?` <span class="pill">folder: ${folder}</span>`:""}</div>
+          <div class="muted" style="font-size:.9em;margin-top:.25rem;">${reason||"Failed"}</div>
         </div>
         <div class="row">
-          <button class="btn-sm" data-action="retry" data-id="${entry.id}">Retry</button>
-          <button class="btn-sm" data-action="remove" data-id="${entry.id}">Remove</button>
+          <button class="btn-sm" data-action="retry" data-id="${id}">Retry</button>
+          <button class="btn-sm" data-action="remove" data-id="${id}">Remove</button>
         </div>
       </div>`;
-    $failList.appendChild(item);
+    $failList.appendChild(el);
   }
-  function addFailure(file,bucket,folder,reason){ const id=uidSeq++; const entry={id,file,bucket,folder,reason};
-    failures.set(id,entry); renderFailureItem(entry); }
-  function removeFailure(id){ failures.delete(id); const el=document.getElementById(`fail-${id}`); if (el) el.remove();
-    if (failures.size===0) $failPanel.style.display="none"; }
+  function removeFailure(id){ failures.delete(id); const el=document.getElementById(`fail-${id}`); if(el) el.remove(); if(failures.size===0) $failPanel.style.display="none"; }
 
-  async function presign(file,bucket,folder){
-    await refreshIfNeeded();
-    const r = await fetch(`${API_BASE}/presign`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "Authorization":`Bearer ${getIdToken()}` },
-      body: JSON.stringify({ filename:file.name, contentType:file.type||"application/octet-stream", bucket, folder })
-    });
-    if (!r.ok){ const t=await r.text().catch(()=>"(no body)"); throw new Error(`Presign failed: ${r.status} ${t}`); }
-    return r.json();
-  }
-  async function uploadWithPresign(file,presign,row){
+  async function uploadWithPresign(file, presign, row){
     const status=row.querySelector(".status"), progress=row.querySelector("progress"), result=row.querySelector(".result");
     status.textContent="Uploading…";
-    const fd=new FormData();
-    Object.entries(presign.fields).forEach(([k,v])=>fd.append(k,v));
-    fd.append("file",file);
+    const fd=new FormData(); Object.entries(presign.fields).forEach(([k,v])=>fd.append(k,v)); fd.append("file", file);
     const xhr=new XMLHttpRequest();
-    const done=new Promise((res,rej)=>{
+    const done=new Promise((resolve,reject)=>{
       xhr.upload.onprogress=e=>{ if(e.lengthComputable) progress.value=Math.round((e.loaded/e.total)*100); };
-      xhr.onload=()=>{ if(xhr.status===204){ status.textContent="Done ✅"; result.textContent=`s3://${presign.bucket}/${presign.key}`; removeRow(row); res(); }
-                       else { status.textContent=`Failed ${xhr.status}`; result.textContent=xhr.responseText||""; removeRow(row); rej(new Error(`S3 upload failed ${xhr.status}`)); } };
-      xhr.onerror=()=>{ status.textContent="Network error"; removeRow(row); rej(new Error("Network error")); };
+      xhr.onload=()=>{ if(xhr.status===204){ status.textContent="Done ✅"; result.textContent=`s3://${presign.bucket}/${presign.key}`; removeRow(row); resolve(); }
+                       else { status.textContent=`Failed ${xhr.status}`; result.textContent=xhr.responseText||""; removeRow(row); reject(new Error(`S3 upload failed ${xhr.status}`)); } };
+      xhr.onerror=()=>{ status.textContent="Network error"; removeRow(row); reject(new Error("Network error")); };
     });
     xhr.open("POST", presign.url, true); xhr.send(fd); return done;
   }
-  async function uploadOne(file,bucket,folder,row){
+  async function uploadOne(file, bucket, folder, row){
     row.querySelector(".status").textContent="Authorizing…";
-    const p = await presign(file,bucket,folder);
-    return uploadWithPresign(file,p,row);
+    const p = await presign(file, bucket, folder);
+    return uploadWithPresign(file, p, row);
   }
 
-  async function uploadMany(files,bucket,folder,concurrency=3){
+  async function uploadMany(files, bucket, folder, concurrency=CONCURRENCY){
     const queue=Array.from(files); let inFlight=0, completed=0, failed=0; const total=queue.length;
-    $overall.textContent=`Starting ${total} upload(s)…`; updateCounters({total,inFlight,completed,failed});
+    $overall.textContent=`Starting ${total} upload(s)…`; updateCounters({ total,inFlight,completed,failed });
     return new Promise((resolve)=>{
       const next=()=>{
         while(inFlight<concurrency && queue.length){
           const file=queue.shift(); const row=makeRow(file); $queue.appendChild(row); boundVisibleRows();
-          inFlight++; updateCounters({total,inFlight,completed,failed});
+          inFlight++; updateCounters({ total,inFlight,completed,failed });
           uploadOne(file,bucket,folder,row)
             .then(()=>completed++)
             .catch(e=>{ failed++; addFailure(file,bucket,folder,e.message); })
             .finally(()=>{
-              inFlight--; updateCounters({total,inFlight,completed,failed});
+              inFlight--; updateCounters({ total,inFlight,completed,failed });
               const done=completed+failed;
-              $overall.textContent = (done===total)
+              $overall.textContent = done===total
                 ? (failed?`All done. ${completed} succeeded, ${failed} failed.`:`All done. ${completed} succeeded.`)
                 : `Completed: ${done}/${total}` + (failed?` • Failed: ${failed}`:"");
               if (done===total) resolve(); else next();
@@ -381,59 +307,101 @@
     });
   }
 
-  document.getElementById("uploadBtn").onclick = async () => {
-    if (!getIdToken()) return alert("Please sign in first.");
-    const list=document.getElementById("files").files; if (!list||!list.length) return alert("Choose one or more files first.");
-    const bucket=document.getElementById("bucket").value; if (!bucket) return alert("Select a bucket.");
-    const folder=(document.getElementById("folder").value||"").trim();
-    $overall.textContent="Preparing…"; updateCounters({ total:list.length, inFlight:0, completed:0, failed:0 });
-    try { await uploadMany(list,bucket,folder,3); } catch(e){ console.error(e); $overall.textContent="Some uploads failed. See above."; }
-  };
-  document.getElementById("clearBtn").onclick = () => {
-    for (const r of $queue.querySelectorAll(".row-item")) {
-      const s=r.querySelector(".status")?.textContent||"";
-      if (/^Done|^Failed|^Presign failed|^Network error/.test(s)) r.remove();
-    }
-  };
-  document.getElementById("failList").addEventListener("click", async (e)=>{
-    const btn=e.target.closest("button"); if(!btn) return; const id=Number(btn.dataset.id); const entry=failures.get(id); if(!entry) return;
-    if (btn.dataset.action==="remove"){ removeFailure(id); return; }
-    if (btn.dataset.action==="retry"){
-      if (!getIdToken()) return alert("Please sign in first.");
-      const row=makeRow(entry.file); $queue.appendChild(row);
-      try {
-        const p=await presign(entry.file,entry.bucket,entry.folder);
-        await uploadWithPresign(entry.file,p,row);
-        const completed=Number(document.getElementById("cntCompleted").textContent)+1;
-        const failed=Math.max(0,Number(document.getElementById("cntFailed").textContent)-1);
-        updateCounters({ total:Number(document.getElementById("cntTotal").textContent), inFlight:Number(document.getElementById("cntInFlight").textContent), completed, failed });
-        removeFailure(id);
-      } catch(err){
-        const i=document.getElementById(`fail-${id}`); if(i) i.querySelector(".muted:last-child").textContent=err.message||"Failed";
-      }
-    }
-  });
-  document.getElementById("retryAllBtn").onclick = async ()=>{
-    if (!getIdToken()) return alert("Please sign in first.");
-    const items=Array.from(failures.values());
-    for (const entry of items){
-      const row=makeRow(entry.file); $queue.appendChild(row);
-      try {
-        const p=await presign(entry.file,entry.bucket,entry.folder);
-        await uploadWithPresign(entry.file,p,row);
-        const completed=Number(document.getElementById("cntCompleted").textContent)+1;
-        const failed=Math.max(0,Number(document.getElementById("cntFailed").textContent)-1);
-        updateCounters({ total:Number(document.getElementById("cntTotal").textContent), inFlight:Number(document.getElementById("cntInFlight").textContent), completed, failed });
-        removeFailure(entry.id);
-      } catch(err){
-        const i=document.getElementById(`fail-${entry.id}`); if(i) i.querySelector(".muted:last-child").textContent=err.message||"Failed";
-      }
-    }
-  };
+  // ================== Render + events ==================
+  async function renderApp(){
+    // header info
+    const p = decodeJwtPayload(auth.idToken);
+    document.getElementById("whoami").textContent = p ? (p.email || p["cognito:username"] || "") : "";
+    document.getElementById("logoutBtn").onclick = logout;
 
-  // wire buttons
-  document.getElementById("logoutBtn").onclick = logout;
-  document.getElementById("loginBtn").onclick  = manualLogin;
+    // buckets
+    try {
+      const names = await fetchBuckets();
+      const sel = document.getElementById("bucket");
+      sel.innerHTML = names.length ? names.map(n=>`<option value="${n}">${n}</option>`).join("") :
+        `<option value="" disabled selected>(none available)</option>`;
+    } catch (e) {
+      alert("Could not load buckets. Check API auth/CORS.");
+      document.getElementById("bucket").innerHTML = `<option value="" disabled selected>(none available)</option>`;
+    }
+
+    // upload actions
+    document.getElementById("uploadBtn").onclick = async () => {
+      const list = document.getElementById("files").files; if (!list || !list.length) return alert("Choose one or more files first.");
+      const bucket = document.getElementById("bucket").value; if (!bucket) return alert("Select a bucket.");
+      const folder = (document.getElementById("folder").value||"").trim();
+      $overall.textContent="Preparing…"; updateCounters({ total:list.length, inFlight:0, completed:0, failed:0 });
+      try { await uploadMany(list, bucket, folder); } catch(e){ console.error(e); $overall.textContent="Some uploads failed. See above."; }
+    };
+    document.getElementById("clearBtn").onclick = () => {
+      for (const r of $queue.querySelectorAll(".row-item")) {
+        const s=r.querySelector(".status")?.textContent||"";
+        if (/^Done|^Failed|^Presign failed|^Network error/.test(s)) r.remove();
+      }
+    };
+    document.getElementById("failList").addEventListener("click", async (e)=>{
+      const btn=e.target.closest("button"); if(!btn) return; const id=Number(btn.dataset.id); const entry=failures.get(id); if(!entry) return;
+      if (btn.dataset.action==="remove"){ removeFailure(id); return; }
+      if (btn.dataset.action==="retry"){
+        const row=makeRow(entry.file); $queue.appendChild(row);
+        try {
+          const p=await presign(entry.file,entry.bucket,entry.folder);
+          await uploadWithPresign(entry.file,p,row);
+          // adjust counters: convert fail to success
+          const completed=Number($cntDone.textContent)+1;
+          const failed=Math.max(0, Number($cntFail.textContent)-1);
+          updateCounters({ total:Number($cntTotal.textContent), inFlight:Number($cntIn.textContent), completed, failed });
+          removeFailure(id);
+        } catch (err) {
+          const i=document.getElementById(`fail-${id}`); if(i) i.querySelector(".muted:last-child").textContent=err.message||"Failed";
+        }
+      }
+    });
+    document.getElementById("retryAllBtn").onclick = async ()=>{
+      const items=Array.from(failures.values());
+      for (const entry of items){
+        const row=makeRow(entry.file); $queue.appendChild(row);
+        try {
+          const p=await presign(entry.file,entry.bucket,entry.folder);
+          await uploadWithPresign(entry.file,p,row);
+          const completed=Number($cntDone.textContent)+1;
+          const failed=Math.max(0, Number($cntFail.textContent)-1);
+          updateCounters({ total:Number($cntTotal.textContent), inFlight:Number($cntIn.textContent), completed, failed });
+          removeFailure(entry.id);
+        } catch (err) {
+          const i=document.getElementById(`fail-${entry.id}`); if(i) i.querySelector(".muted:last-child").textContent=err.message||"Failed";
+        }
+      }
+    };
+  }
+
+  // ================== Boot (auth first) ==================
+  (async function boot(){
+    if (!validateConfig()) return;
+
+    const sp = new URLSearchParams(location.search);
+
+    if (sp.get("code")) {
+      try {
+        await exchangeCodeForTokens(sp.get("code"));
+        history.replaceState({}, document.title, location.pathname);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    if (!auth.idToken) {
+      if (sp.get("signedout") === "1") {
+        const url2 = await buildLoginUrl(); window.location.replace(url2); return;
+      }
+      const url = await buildLoginUrl(); window.location.replace(url); return;
+    }
+
+    // Show app
+    document.getElementById("gate").style.display = "none";
+    document.getElementById("app").style.display  = "block";
+    renderApp();
+  })();
 </script>
 </body>
 </html>
