@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>The Rajas Photo And Video Uploader App</title>
+  <title>S3 Uploader — Auth First (PKCE)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root { color-scheme: light dark; }
@@ -37,13 +37,13 @@
           <button id="logoutBtn">Sign out</button>
         </div>
       </div>
-      <p class="muted">Welcome to our portal for uploading photos and videos.</p>
+      <p class="muted">Authenticated via Cognito Hosted UI (/login + PKCE). Tokens live only in memory.</p>
 
       <div class="card">
         <div class="grid">
           <label>Bucket
             <select id="bucket"><option>Loading…</option></select>
-            <small class="muted">Select a bucket</small>
+            <small class="muted">Loaded from <code>GET /buckets</code></small>
           </label>
           <label>Folder (prefix)
             <input id="folder" type="text" placeholder="e.g. uploads/wedding/2025" />

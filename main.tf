@@ -18,7 +18,6 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
-  profile = "personal"
 }
 
 
@@ -294,6 +293,7 @@ resource "aws_lambda_permission" "allow_apigw_invoke" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.presign.function_name
+  qualifier     = aws_lambda_alias.prod.name
   principal     = "apigateway.amazonaws.com"
   # Allow any stage/route of this API to invoke
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
@@ -304,6 +304,7 @@ resource "aws_lambda_permission" "apigw_invoke" {
   statement_id  = "AllowInvokeFromAPIGW"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.presign.function_name
+  qualifier     = aws_lambda_alias.prod.name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*/presign"
 }

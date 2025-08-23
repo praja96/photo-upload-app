@@ -135,11 +135,11 @@ def handler(event, context):
             claims  = (event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {}))
             user_id = claims.get("sub", "anon")
 
-            prefix = f"{folder}" if folder else ""
+            prefix = f"{folder}/" if folder else ""
             if ENFORCE_USER_PREFIX:
                 prefix = f"uploads/{user_id}/" + prefix
 
-            key = f"{prefix}/{filename}"
+            key = f"{prefix}{filename}"
 
             s3_global = boto3.client("s3")
             region    = _bucket_region(s3_global, bucket)
